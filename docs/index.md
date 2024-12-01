@@ -16,6 +16,11 @@ Inspired by: "https://github.com/lgandx/PCredz" - this tool aims to capture plai
 
 To use gocredz, simply download the binary from the release tab on github (https://github.com/fancyc-bsi/gocredz)
 
+- ensure you have libpcap-dev installed for packet capture.
+
+```bash
+sudo apt-get install -y libpcap-dev 
+``` 
 
 ## Features
 Supports capture from the following: 

@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpcap-dev libnl-3-dev libnl-genl-3-dev upx-ucl
+          sudo apt-get install -y libpcap-dev upx-ucl
 
       - name: Build
         run: |
