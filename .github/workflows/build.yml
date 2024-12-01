@@ -1,0 +1,84 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build GoCredz
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # This ensures git describe works correctly
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcap-dev libnl-3-dev libnl-genl-3-dev upx-ucl
+
+      - name: Build
+        run: |
+          # Set version from git tag
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
+          
+          # Ensure dependencies are downloaded
+          go mod tidy
+          go mod verify
+          
+          # Create bin directory
+          mkdir -p bin
+          
+          # Build flags
+          LDFLAGS="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}"
+          GOFLAGS="-trimpath"
+          
+          # Build the binary
+          CGO_ENABLED=1 \
+          CGO_CFLAGS="-I/usr/include" \
+          CGO_LDFLAGS="-L/usr/lib/x86_64-linux-gnu -lpcap -lnl-3 -lnl-genl-3 -Wl,-rpath=/usr/lib/x86_64-linux-gnu" \
+          go build \
+            ${GOFLAGS} \
+            -ldflags="${LDFLAGS}" \
+            -o bin/gocredz \
+            ./cmd/gnc
+          
+          # Compress with UPX
+          upx --best --no-progress bin/gocredz
+          
+          # Make binary executable
+          chmod +x bin/gocredz
+
+      - name: Test binary
+        run: |
+          ldd bin/gocredz
+          file bin/gocredz
+          ls -lh bin/gocredz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: gocredz-linux-amd64
+          path: bin/gocredz
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            bin/gocredz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

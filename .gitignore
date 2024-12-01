@@ -1,0 +1,6 @@
+gocredz_output.*
+*.pcap
+docker-compose.yml
+arp.cache
+bin/
+go.sum
