@@ -46,8 +46,6 @@ jobs:
           
           # Build the binary
           CGO_ENABLED=1 \
-          CGO_CFLAGS="-I/usr/include" \
-          CGO_LDFLAGS="-L/usr/lib/x86_64-linux-gnu -lpcap -lnl-3 -lnl-genl-3 -Wl,-rpath=/usr/lib/x86_64-linux-gnu" \
           go build \
             ${GOFLAGS} \
             -ldflags="${LDFLAGS}" \
@@ -62,7 +60,6 @@ jobs:
 
       - name: Test binary
         run: |
-          ldd bin/gocredz
           file bin/gocredz
           ls -lh bin/gocredz
 
