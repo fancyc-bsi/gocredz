@@ -107,6 +107,8 @@ func (c *Capture) buildBPFFilter() string {
 			filters = append(filters, "udp port 5355")
 		case "dnsv6":
 			filters = append(filters, "udp port 53 or tcp port 53")
+		case "ntlm":
+			filters = append(filters, "tcp port 445")
 		}
 	}
 

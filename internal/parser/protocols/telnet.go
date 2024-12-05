@@ -110,7 +110,6 @@ package protocols
 import (
 	"bytes"
 	"fmt"
-	"gnc/internal/logger"
 	"gnc/pkg/types"
 	"strings"
 	"sync"
@@ -120,7 +119,7 @@ import (
 type TelnetParser struct {
 	sessions map[string]*TelnetSession
 	mu       sync.RWMutex
-	log      *logger.Logger
+	// log      *logger.Logger
 }
 
 type TelnetSession struct {

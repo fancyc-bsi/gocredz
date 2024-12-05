@@ -20,13 +20,15 @@ import (
 
 // Storage handles credential storage and deduplication
 type Storage struct {
-	csvFile    *os.File
-	csvWriter  *csv.Writer
-	jsonFile   *os.File
-	seen       map[string]time.Time
-	mu         sync.RWMutex
-	log        *logger.Logger
-	outputPath string
+	csvFile       *os.File
+	csvWriter     *csv.Writer
+	jsonFile      *os.File
+	seen          map[string]time.Time
+	mu            sync.RWMutex
+	log           *logger.Logger
+	outputPath    string
+	llmnrDetected bool
+	ipv6Detected  bool
 }
 
 // Config defines the storage configuration
@@ -188,25 +190,17 @@ func (s *Storage) Save(creds *types.Credentials) error {
 
 	// Log the capture with protocol-specific messages
 	if creds.Protocol == "LLMNR" {
-		s.log.Success("\n Intercepted LLMNR Query:\n"+
-			"  └─ From: %s\n"+
-			"  └─ To:   %s\n"+
-			"  └─ Query: %s",
-			formatEndpoint(creds.Source.IP, creds.Source.Port),
-			formatEndpoint(creds.Destination.IP, creds.Destination.Port),
-			formatCredentialData(creds.Data),
-		)
+		if !s.llmnrDetected {
+			s.log.Success("LLMNR Protocol Detected on Network")
+			s.llmnrDetected = true
+		}
 	} else if creds.Protocol == "IPV6" {
-		s.log.Success("\n Intercepted IPv6 Discovery:\n"+
-			"  └─ From: %s\n"+
-			"  └─ To:   %s\n"+
-			"  └─ Data: %s",
-			formatEndpoint(creds.Source.IP, creds.Source.Port),
-			formatEndpoint(creds.Destination.IP, creds.Destination.Port),
-			formatCredentialData(creds.Data),
-		)
+		if !s.ipv6Detected {
+			s.log.Success("IPv6 Protocol Detected on Network")
+			s.ipv6Detected = true
+		}
 	} else {
-		s.log.Success("\n Captured %s Credentials:\n"+
+		s.log.Success("Captured %s Credentials:\n"+
 			"  └─ From: %s\n"+
 			"  └─ To:   %s\n"+
 			"  └─ Data: %s",

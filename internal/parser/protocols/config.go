@@ -92,8 +92,10 @@ func NewProtocolRegistry() *ProtocolRegistry {
 				IsSecure: false,
 			},
 			"ntlm": {
-				Name:          "ntlm",
-				Ports:         map[uint16]bool{}, // No specific ports as it's embedded
+				Name: "ntlm",
+				Ports: map[uint16]bool{
+					445: true, // SMB
+				},
 				CanBeEmbedded: true,
 			},
 		},
