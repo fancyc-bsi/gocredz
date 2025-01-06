@@ -6,17 +6,15 @@ import (
 	"encoding/hex"
 	"fmt"
 	"gnc/pkg/types"
+	"sync"
 )
 
 type NTLMParser struct {
-	// Map to store NTLM challenges using session key (src:port-dst:port)
-	challenges map[string][]byte
+	challenges sync.Map
 }
 
 func NewNTLMParser() *NTLMParser {
-	return &NTLMParser{
-		challenges: make(map[string][]byte),
-	}
+	return &NTLMParser{}
 }
 
 func (p *NTLMParser) Protocol() string {
@@ -28,79 +26,110 @@ func (p *NTLMParser) Parse(packet *types.Packet) (*types.Credentials, error) {
 		return nil, nil
 	}
 
+	// Search for NTLM signatures anywhere in the packet
 	data := packet.Data
-	if !bytes.Contains(data, []byte("NTLMSSP\x00")) {
-		return nil, nil
+	var ntlmMessages [][]byte
+
+	// Look for all NTLM messages in the packet
+	offset := 0
+	for {
+		idx := bytes.Index(data[offset:], []byte("NTLMSSP\x00"))
+		if idx == -1 {
+			break
+		}
+		messageStart := offset + idx
+		if messageStart+12 <= len(data) {
+			ntlmMessages = append(ntlmMessages, data[messageStart:])
+		}
+		offset = messageStart + 8
 	}
 
-	msgType := binary.LittleEndian.Uint32(data[8:12])
-	switch msgType {
-	case 1: // Negotiate
-		return nil, nil
-	case 2: // Challenge
-		return p.handleChallenge(packet)
-	case 3: // Authenticate
-		return p.handleAuth(packet)
+	// Process all NTLM messages found
+	for _, msgData := range ntlmMessages {
+		if len(msgData) < 12 {
+			continue
+		}
+
+		msgType := binary.LittleEndian.Uint32(msgData[8:12])
+		var creds *types.Credentials
+		var err error
+
+		switch msgType {
+		case 2: // Challenge
+			creds, err = p.handleChallenge(packet, msgData)
+		case 3: // Authenticate
+			creds, err = p.handleAuth(packet, msgData)
+		}
+
+		if err != nil {
+			continue
+		}
+		if creds != nil {
+			return creds, nil
+		}
 	}
 
 	return nil, nil
 }
 
-func (p *NTLMParser) handleChallenge(packet *types.Packet) (*types.Credentials, error) {
-	// Store challenge for future auth
-	data := packet.Data
-	challengeStart := bytes.Index(data, []byte("NTLMSSP\x00\x02\x00\x00\x00"))
-	if challengeStart == -1 || len(data[challengeStart:]) < 32 {
+func (p *NTLMParser) handleChallenge(packet *types.Packet, data []byte) (*types.Credentials, error) {
+	if len(data) < 32 {
 		return nil, nil
 	}
 
-	sessionKey := fmt.Sprintf("%s:%d-%s:%d",
-		packet.Source.IP, packet.Source.Port,
-		packet.Destination.IP, packet.Destination.Port)
+	challenge := data[24:32]
 
-	p.challenges[sessionKey] = data[challengeStart+24 : challengeStart+32]
-	// fmt.Printf("Stored challenge with session key: %s\n", sessionKey)
+	// Generate multiple possible session keys
+	sessionKeys := p.generateSessionKeys(packet)
+
+	// Store challenge under all possible session key combinations
+	for _, key := range sessionKeys {
+		p.challenges.Store(key, challenge)
+	}
+
 	return nil, nil
 }
 
-func (p *NTLMParser) handleAuth(packet *types.Packet) (*types.Credentials, error) {
-	data := packet.Data
-	authStart := bytes.Index(data, []byte("NTLMSSP\x00\x03\x00\x00\x00"))
-	if authStart == -1 || len(data[authStart:]) < 64 {
+func (p *NTLMParser) handleAuth(packet *types.Packet, data []byte) (*types.Credentials, error) {
+	if len(data) < 64 {
 		return nil, nil
 	}
 
-	msg := data[authStart:]
+	// Extract lengths and offsets
+	lmHashLen := binary.LittleEndian.Uint16(data[14:16])
+	lmHashOffset := binary.LittleEndian.Uint16(data[16:18])
+	ntHashLen := binary.LittleEndian.Uint16(data[22:24])
+	ntHashOffset := binary.LittleEndian.Uint16(data[24:26])
+	domainLen := binary.LittleEndian.Uint16(data[30:32])
+	domainOffset := binary.LittleEndian.Uint16(data[32:34])
+	userLen := binary.LittleEndian.Uint16(data[38:40])
+	userOffset := binary.LittleEndian.Uint16(data[40:42])
 
-	// Extract field lengths and offsets
-	lmLen := binary.LittleEndian.Uint16(msg[12:14])
-	lmOffset := binary.LittleEndian.Uint32(msg[16:20])
-	ntLen := binary.LittleEndian.Uint16(msg[20:22])
-	ntOffset := binary.LittleEndian.Uint32(msg[24:28])
-	domainLen := binary.LittleEndian.Uint16(msg[28:30])
-	domainOffset := binary.LittleEndian.Uint32(msg[32:36])
-	userLen := binary.LittleEndian.Uint16(msg[36:38])
-	userOffset := binary.LittleEndian.Uint32(msg[40:44])
-
-	// Validate offsets and lengths
-	msgLen := len(msg)
-	if !p.validateOffset(lmOffset, lmLen, msgLen) ||
-		!p.validateOffset(ntOffset, ntLen, msgLen) ||
-		!p.validateOffset(domainOffset, domainLen, msgLen) ||
-		!p.validateOffset(userOffset, userLen, msgLen) {
+	if !p.validateOffsets(data, lmHashOffset, lmHashLen, ntHashOffset, ntHashLen,
+		domainOffset, domainLen, userOffset, userLen) {
 		return nil, nil
 	}
 
-	// Get associated challenge
-	sessionKey := fmt.Sprintf("%s:%d-%s:%d",
-		packet.Destination.IP, packet.Destination.Port,
-		packet.Source.IP, packet.Source.Port)
+	// Extract fields
+	lmHash := data[lmHashOffset : lmHashOffset+lmHashLen]
+	ntHash := data[ntHashOffset : ntHashOffset+ntHashLen]
+	domain := bytes.Replace(data[domainOffset:domainOffset+domainLen], []byte{0x00}, []byte{}, -1)
+	username := bytes.Replace(data[userOffset:userOffset+userLen], []byte{0x00}, []byte{}, -1)
 
-	fmt.Printf("Looking for challenge with session key: %s\n", sessionKey)
-	challenge, exists := p.challenges[sessionKey]
+	// Try all possible session key combinations
+	var challenge []byte
+	sessionKeys := p.generateSessionKeys(packet)
 
-	if !exists {
-		fmt.Printf("No challenge found. Available keys: %v\n", p.challenges)
+	for _, key := range sessionKeys {
+		if challengeI, ok := p.challenges.Load(key); ok {
+			challenge = challengeI.([]byte)
+			// Cleanup stored challenge
+			p.challenges.Delete(key)
+			break
+		}
+	}
+
+	if challenge == nil {
 		return nil, nil
 	}
 
@@ -108,22 +137,62 @@ func (p *NTLMParser) handleAuth(packet *types.Packet) (*types.Credentials, error
 		Protocol:    "NTLM",
 		Source:      packet.Source,
 		Destination: packet.Destination,
-		Data: map[string]string{
-			"domain": string(bytes.TrimRight(msg[domainOffset:domainOffset+uint32(domainLen)], "\x00")),
-			"user":   string(bytes.TrimRight(msg[userOffset:userOffset+uint32(userLen)], "\x00")),
-			"lmhash": hex.EncodeToString(msg[lmOffset : lmOffset+uint32(lmLen)]),
-			"nthash": hex.EncodeToString(msg[ntOffset : ntOffset+uint32(ntLen)]),
-		},
+		Data:        make(map[string]string),
 	}
 
-	if exists {
-		creds.Data["challenge"] = hex.EncodeToString(challenge)
-		delete(p.challenges, sessionKey)
+	// Format based on hash length (NTLMv1 vs NTLMv2)
+	if ntHashLen == 24 {
+		creds.Data["type"] = "NTLMv1"
+		creds.Data["hash"] = fmt.Sprintf("%s::%s:%s:%s:%s",
+			string(username),
+			string(domain),
+			hex.EncodeToString(lmHash),
+			hex.EncodeToString(ntHash),
+			hex.EncodeToString(challenge))
+	} else if ntHashLen > 60 {
+		creds.Data["type"] = "NTLMv2"
+		creds.Data["hash"] = fmt.Sprintf("%s::%s:%s:%s:%s",
+			string(username),
+			string(domain),
+			hex.EncodeToString(challenge),
+			hex.EncodeToString(ntHash[:16]),
+			hex.EncodeToString(ntHash[16:]))
 	}
 
 	return creds, nil
 }
 
-func (p *NTLMParser) validateOffset(offset uint32, length uint16, msgLen int) bool {
-	return offset > 0 && int(offset)+int(length) <= msgLen
+func (p *NTLMParser) generateSessionKeys(packet *types.Packet) []string {
+	// Generate all possible session key combinations
+	keys := make([]string, 0, 4)
+
+	// Standard format: src:srcport-dst:dstport
+	keys = append(keys, fmt.Sprintf("%s:%d-%s:%d",
+		packet.Source.IP, packet.Source.Port,
+		packet.Destination.IP, packet.Destination.Port))
+
+	// Reverse format: dst:dstport-src:srcport
+	keys = append(keys, fmt.Sprintf("%s:%d-%s:%d",
+		packet.Destination.IP, packet.Destination.Port,
+		packet.Source.IP, packet.Source.Port))
+
+	// Without ports
+	keys = append(keys, fmt.Sprintf("%s-%s",
+		packet.Source.IP, packet.Destination.IP))
+	keys = append(keys, fmt.Sprintf("%s-%s",
+		packet.Destination.IP, packet.Source.IP))
+
+	return keys
+}
+
+func (p *NTLMParser) validateOffsets(data []byte, offsets ...uint16) bool {
+	dataLen := len(data)
+	for i := 0; i < len(offsets); i += 2 {
+		offset := offsets[i]
+		length := offsets[i+1]
+		if offset == 0 || int(offset)+int(length) > dataLen {
+			return false
+		}
+	}
+	return true
 }
