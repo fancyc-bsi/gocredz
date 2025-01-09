@@ -21,7 +21,7 @@ func ParseFlags() *types.Config {
 	flag.BoolVar(&conf.ShowVersion, "version", false, "Show version information")
 
 	var filters string
-	flag.StringVar(&filters, "c", "all", "Comma-separated capture methods")
+	flag.StringVar(&filters, "c", "all", "Comma-separated capture methods. Supported options: http, telnet, ftp, smtp, ldap, snmp, kerberos, dhcpv6, llmnr, dnsv6, ntlm")
 	flag.StringVar(&conf.Regex, "r", "", "Custom regex pattern")
 	flag.StringVar(&conf.OutputPath, "o", "gocredz_output", "Output file path (without extension)")
 	flag.BoolVar(&conf.JSONOutput, "json", false, "Enable JSON output format")

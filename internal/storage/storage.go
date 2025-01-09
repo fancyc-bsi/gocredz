@@ -191,12 +191,12 @@ func (s *Storage) Save(creds *types.Credentials) error {
 	// Log the capture with protocol-specific messages
 	if creds.Protocol == "LLMNR" {
 		if !s.llmnrDetected {
-			s.log.Success("LLMNR Protocol Detected on Network")
+			s.log.Success("LLMNR Protocol Detected on Network - Try using responder")
 			s.llmnrDetected = true
 		}
 	} else if creds.Protocol == "IPV6" {
 		if !s.ipv6Detected {
-			s.log.Success("IPv6 Protocol Detected on Network")
+			s.log.Success("IPv6 Protocol Detected on Network - Try using mitm6")
 			s.ipv6Detected = true
 		}
 	} else {
