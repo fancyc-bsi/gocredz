@@ -45,3 +45,7 @@ Examples:
 # Documentation
 
 View the docs at : https://fancyc-bsi.github.io/gocredz/
+
+# Credits
+
+https://github.com/lgandx/PCredz
